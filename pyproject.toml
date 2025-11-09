@@ -1,0 +1,15 @@
+[build-system]
+requires = ["setuptools>=80.9.0", "wheel>=0.45.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "scheme"
+version = "0.1.0"
+description = "A scheme interpreter."
+readme = "README.md"
+license = "MIT"
+requires-python = ">= 3.12"
+dependencies = []
+
+[projec.urls]
+Homepage = "https://github.com/hema-1046/silly-small-scheme"
