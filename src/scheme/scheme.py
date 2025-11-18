@@ -1,10 +1,15 @@
 #!/usr/bin/env python3
 
 
+"""A simple Scheme interpreter."""
+
+
 import re
 
 
 class Symbol:
+    """A Scheme symbol."""
+
     def __init__(self, name):
         self._name = name
 
@@ -18,25 +23,33 @@ class Symbol:
         if self is other:
             return True
 
-        if type(other) is Symbol:
+        if isinstance(other, Symbol):
             return self._name == other._name
 
         return False
 
 
 class Closure:
+    """A Scheme closure."""
+
     def __init__(self, forms, params, frame):
         self._forms = forms
         self._params = params
         self._frame = frame
 
     def get_forms(self):
+        """Return the forms of this closure."""
+
         return self._forms
 
     def get_params(self):
+        """Return the names of he formal parameters of this closure."""
+
         return self._params
 
     def get_frame(self):
+        """Return the frame in which this closure was created."""
+
         return self._frame
 
     def __call__(self, *args):
@@ -44,11 +57,15 @@ class Closure:
 
 
 class Frame:
-    def __init__(self, bindings={}, parent=None):
-        self._bindings = bindings
+    """A Scheme frame is a collection of bindings."""
+
+    def __init__(self, bindings=None, parent=None):
+        self._bindings = bindings if bindings else {}
         self._parent = parent
 
     def lookup(self, symbol):
+        """Look up the value bound to the given symbol. """
+
         if symbol in self._bindings:
             return self._bindings[symbol]
 
@@ -58,9 +75,19 @@ class Frame:
         return None
 
     def bind(self, symbol, value):
+        """Bind the value to the symbol in this frame."""
+
         self._bindings[symbol] = value
 
     def set(self, symbol, value):
+        """Set the value bound to the given symbol.
+
+        This updates the binding in the nearest frame in
+        which the symbol is bound.
+        If the symbol is not bound in any frame, it
+        creates a new binding in this frame.
+        """
+
         if symbol in self._bindings:
             self._bindings[symbol] = value
         elif self._parent and self._parent.lookup(symbol):
@@ -70,18 +97,21 @@ class Frame:
 
 
 class SchemeError(Exception):
-    pass
+    """An error that occurred during Scheme evaluation."""
 
 
 def evaluate(value, frame):
-    if type(value) is Symbol:
+    # pylint: disable=too-many-branches, too-many-return-statements
+    """Evaluate value in the given frame."""
+
+    if isinstance(value, Symbol):
         bound = frame.lookup(value)
         if bound is None:
             raise SchemeError("Unbound:" + str(value))
 
         return bound
 
-    if value == [] or type(value) is not list:
+    if value == [] or not isinstance(value, list):
         return value
 
     if value[0] == Symbol('quote'):
@@ -97,8 +127,8 @@ def evaluate(value, frame):
         test = evaluate(value[1], frame)
         if test:
             return evaluate(value[2], frame)
-        else:
-            return evaluate(value[3], frame)
+
+        return evaluate(value[3], frame)
 
     if value[0] == Symbol('cond'):
         for branch in value[1:]:
@@ -143,7 +173,9 @@ def evaluate(value, frame):
 
 
 def apply(func, params):
-    if type(func) is Closure:
+    """Apply func to params."""
+
+    if isinstance(func, Closure):
         bindings = {p[0]: p[1] for p in zip(func.get_params(), params)}
         frame = Frame(bindings, func.get_frame())
         result = []
@@ -170,10 +202,13 @@ TOKEN_SPECS = [
 ]
 
 
-TOKENIZER_PATTERN = re.compile('|'.join('(?P<%s>%s)' % p for p in TOKEN_SPECS))
+TOKENIZER_PATTERN = re.compile(
+    '|'.join(f"(?P<{p[0]}>{p[1]})" for p in TOKEN_SPECS))
 
 
 def tokenize(string):
+    """Tokenize string into a list of tokens."""
+
     tokens = []
     for match in TOKENIZER_PATTERN.finditer(string):
         kind = match.lastgroup
@@ -193,6 +228,8 @@ def tokenize(string):
 
 
 def parse(string):
+    """Parse string into a value."""
+
     if re.fullmatch(r'\s*', string):
         return []
 
@@ -204,11 +241,12 @@ def parse(string):
 
     if len(forms) == 2:
         return forms[1]
-    else:
-        return forms
+
+    return forms
 
 
 def _parse(tokens):
+    # pylint: disable=too-many-branches, too-many-return-statements
     if not tokens:
         return []
 
@@ -241,10 +279,11 @@ def _parse(tokens):
         elements = []
         while tokens and tokens[0][0] != 'RP':
             elements.append(_parse(tokens))
+
         if not tokens:
             raise SchemeError('Missing RP')
-        else:
-            tokens.pop(0)
+
+        tokens.pop(0)
 
         return elements
 
@@ -268,19 +307,23 @@ BUILTIN_FUNCTIONS_BY_NAME = {
     'cdr': lambda x: x[1:],
     'cons': lambda x, y: [x] + y,
     'not': lambda x: not bool(x),
-    'length': lambda x: len(x),
+    'length': len,
     'map': lambda func, elems: list(map(func, elems)),
     'filter': lambda func, elems: list(filter(func, elems)),
-    'apply': lambda func, elems: apply(func, elems)
+    'apply': apply,
 }
 
 
-class SchemeContext:
+class SchemeContext:  # pylint: disable=too-few-public-methods
+    """A Scheme evaluation context."""
+
     def __init__(self):
         bindings = {Symbol(k): v for k, v in BUILTIN_FUNCTIONS_BY_NAME.items()}
         self._frame = Frame(bindings)
         bindings[Symbol('eval')] = lambda x: evaluate(x, self._frame)
 
     def evaluate(self, string):
+        """Evaluate the given string in this context."""
+
         value = parse(string)
         return evaluate(value, self._frame)
