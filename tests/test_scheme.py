@@ -1,6 +1,7 @@
 from scheme.scheme import *
-import unittest
 
+import unittest
+import time
 
 class SymbolTest(unittest.TestCase):
     def setUp(self):
@@ -11,12 +12,6 @@ class SymbolTest(unittest.TestCase):
 
     def test_equals_have_equal_hash(self):
         self.assertEqual(hash(Symbol('a')), hash(self.fixture))
-        
-
-class ClosureTest(unittest.TestCase):
-    def test_callable(self):
-        fixture = Closure([Symbol('x')], [Symbol('x')], Frame())
-        self.assertEqual(4, fixture(4))
 
         
 class FrameTest(unittest.TestCase):
@@ -42,91 +37,101 @@ class FrameTest(unittest.TestCase):
 class EvaluationTest(unittest.TestCase):
     def setUp(self):
         self.frame = Frame(bindings={Symbol('a'):17})
-        
+        self.scheme = Scheme()
+
+    def evaluate(self, value, frame):
+        return self.scheme._evaluate(value, frame)
+    
     def test_self_evaluates_number(self):
-        self.assertEqual(42, evaluate(42, self.frame))
+        self.assertEqual(42, self.evaluate(42, self.frame))
 
     def test_self_evaluates_empty_list(self):
-        self.assertEqual([], evaluate([], self.frame))
+        self.assertEqual([], self.evaluate([], self.frame))
         
     def test_self_evaluates_native_function(self):
-        self.assertEqual(3, evaluate(lambda x, y: x + y, self.frame)(1, 2))
+        self.assertEqual(3, self.evaluate(lambda x, y: x + y, self.frame)(1, 2))
         
     def test_lookup_symbol(self):
-        self.assertEqual(17, evaluate(Symbol('a'), self.frame))
+        self.assertEqual(17, self.evaluate(Symbol('a'), self.frame))
 
     def test_lookup_unbound_symbol(self):
         with self.assertRaises(SchemeError):
-            evaluate(Symbol('x'), self.frame)
+            self.evaluate(Symbol('x'), self.frame)
 
     def test_quote(self):
-        self.assertEqual(Symbol('abc'), evaluate([Symbol('quote'), Symbol('abc')], self.frame))
+        self.assertEqual(Symbol('abc'), self.evaluate([Symbol('quote'), Symbol('abc')], self.frame))
 
     def test_applies_native(self):
-        self.assertEqual(3, evaluate([lambda x, y: x + y, 1, 2], self.frame))
+        self.assertEqual(3, self.evaluate([lambda x, y: x + y, 1, 2], self.frame))
 
     def test_progn(self):
         value = [Symbol('progn'), 1, 2]
-        self.assertEqual(2, evaluate(value, self.frame))
+        self.assertEqual(2, self.evaluate(value, self.frame))
         
     def test_if(self):
         value = [Symbol('if'), True, 1, 2]
-        self.assertEqual(1, evaluate(value, self.frame))
+        self.assertEqual(1, self.evaluate(value, self.frame))
 
     def test_cond(self):
         value = [Symbol('cond'), [False, 1], [True, 2]]
-        self.assertEqual(2, evaluate(value, self.frame))
+        self.assertEqual(2, self.evaluate(value, self.frame))
 
     def test_cond_without_branch_returns_nil(self):
         value = [Symbol('cond'), [False, 1], [False, 2]]
-        self.assertEqual([], evaluate(value, self.frame))
+        self.assertEqual([], self.evaluate(value, self.frame))
                          
     def test_define_returns_empty_list(self):
         value = [Symbol('define'), [Symbol('x')], 42]
-        self.assertEqual([], evaluate(value, self.frame))
+        self.assertEqual([], self.evaluate(value, self.frame))
 
     def test_define_creates_closure(self):
         value = [Symbol('define'), [Symbol('x')], 42]
-        evaluate(value, self.frame)
+        self.evaluate(value, self.frame)
         self.assertEqual(Closure, type(self.frame.lookup(Symbol('x'))))
 
     def test_lambda_creates_closure(self):
         value = [Symbol('lambda'), [Symbol('x')], Symbol('x')]
-        self.assertEqual(Closure, type(evaluate(value, self.frame)))
+        self.assertEqual(Closure, type(self.evaluate(value, self.frame)))
 
     def test_set_returns_empty_list(self):
         value = [Symbol('set'), Symbol('x'), 3]
-        self.assertEqual([], evaluate(value, self.frame))
+        self.assertEqual([], self.evaluate(value, self.frame))
 
     def test_set_binds_value(self):
         value = [Symbol('set'), Symbol('x'), 3]
-        evaluate(value, self.frame)
+        self.evaluate(value, self.frame)
         self.assertEqual(3, self.frame.lookup(Symbol('x')))
 
     def test_let_creates_frame(self):
         value = [Symbol('let'), [[Symbol('a'), 12]], Symbol('a')]
-        self.assertEqual(12, evaluate(value, self.frame))
+        self.assertEqual(12, self.evaluate(value, self.frame))
 
     def test_and(self):
         value = [Symbol('and'), 1, 2, 3]
-        self.assertEqual(True, evaluate(value, self.frame))
+        self.assertEqual(True, self.evaluate(value, self.frame))
 
     def test_or(self):
         value = [Symbol('or'), [], False, False]
-        self.assertEqual(False, evaluate(value, self.frame))
+        self.assertEqual(False, self.evaluate(value, self.frame))
         
 
 class ApplyTest(unittest.TestCase):
+    def setUp(self):
+        self.scheme = Scheme()
+
+    def apply(self, func, params):
+        return self.scheme._apply(func, params)
+    
     def test_apply_closure(self):
         closure = Closure([Symbol('x')], [Symbol('x')], Frame())
-        self.assertEqual(2, apply(closure, [2]))
+        self.assertEqual(2, self.apply(closure, [2]))
         
     def test_apply_native_function(self):
-        self.assertEqual(5, apply(lambda x, y: x + y, [1, 4]))
+        self.assertEqual(5, self.apply(lambda x, y: x + y, [1, 4]))
 
     def test_raises_error(self):
         with self.assertRaises(SchemeError):
-            apply(123, [])
+            self.apply(123, [])
 
 
 class TokenizerTest(unittest.TestCase):
@@ -185,9 +190,9 @@ class ParserTest(unittest.TestCase):
         self.assertEqual([Symbol('progn'), 1, 2], parse('1 2'))
         
 
-class SchemeContextTest(unittest.TestCase):
+class SchemeTest(unittest.TestCase):
     def setUp(self):
-        self.fixture = SchemeContext()
+        self.fixture = Scheme()
 
     def evaluate(self, string):
         return self.fixture.evaluate(string)
@@ -244,7 +249,16 @@ class SchemeContextTest(unittest.TestCase):
     def test_let(self):
         self.assertEqual(3,
                          self.evaluate('(let ((a (lambda (x y) (+ x y)))) (a 1 2))'))
-    
-        
-if __name__ == '__main__':
-    unittest.main()
+
+    def test_recursion(self):
+        with self.assertRaises(SchemeError):
+            self.evaluate('(define (x) (x)) (x)')
+
+    def test_evaluation_time(self):
+        self.evaluate("(+ 1 3)")
+        self.assertTrue(self.fixture.last_evaluation_time() > 0)
+
+    def test_max_evaluation_time(self):
+        self.fixture = Scheme({'sleep': lambda: time.sleep(0.15) })
+        with self.assertRaises(SchemeError):
+            self.evaluate("(sleep)")

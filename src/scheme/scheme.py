@@ -5,7 +5,7 @@
 
 
 import re
-
+import time
 
 class Symbol:
     """A Scheme symbol."""
@@ -43,7 +43,7 @@ class Closure:
         return self._forms
 
     def get_params(self):
-        """Return the names of he formal parameters of this closure."""
+        """Return the names of the formal parameters of this closure."""
 
         return self._params
 
@@ -51,9 +51,6 @@ class Closure:
         """Return the frame in which this closure was created."""
 
         return self._frame
-
-    def __call__(self, *args):
-        return apply(self, args)
 
 
 class Frame:
@@ -100,93 +97,172 @@ class SchemeError(Exception):
     """An error that occurred during Scheme evaluation."""
 
 
-def evaluate(value, frame):
-    # pylint: disable=too-many-branches, too-many-return-statements
-    """Evaluate value in the given frame."""
+BUILTIN_FUNCTIONS_BY_NAME = {
+    '+': lambda x, y: x + y,
+    '-': lambda x, y: x - y,
+    '*': lambda x, y: x * y,
+    'mod': lambda x, y: x % y,
+    '/': lambda x, y: x / y,
+    '>': lambda x, y: x > y,
+    '>=': lambda x, y: x >= y,
+    '<': lambda x, y: x <= y,
+    '<=': lambda x, y: x <= y,
+    '=': lambda x, y: x == y,
+    'eq?': lambda x, y: type(x) is type(y) and x == y,
+    'null?': lambda x: x == [],
+    'car': lambda x: x[0],
+    'cdr': lambda x: x[1:],
+    'cons': lambda x, y: [x] + y,
+    'not': lambda x: not bool(x),
+    'length': len,
+}
 
-    if isinstance(value, Symbol):
-        bound = frame.lookup(value)
-        if bound is None:
-            raise SchemeError("Unbound:" + str(value))
+# The default maximum recursion depth of nested evaluations.
+DEFAULT_MAX_DEPTH = 100
 
-        return bound
+# The default maximum time for one top-level evaluation, in seconds.
+DEFAULT_MAX_TIME = 0.1
 
-    if value == [] or not isinstance(value, list):
-        return value
+class Scheme:
+    """A Scheme evaluation context."""
 
-    if value[0] == Symbol('quote'):
-        return value[1]
+    def __init__(self, mappings={}):
+        """Initializes a new instance."""
+        
+        bindings = {Symbol(k): v for k, v in BUILTIN_FUNCTIONS_BY_NAME.items()}
+        bindings[Symbol('eval')] = lambda x: self._evaluate(x, self._toplevelframe)
+        bindings[Symbol('apply')] = lambda func, params: self._apply(func, params)
+        bindings[Symbol('map')] = lambda func, elems: [self._apply(func, [elem]) for elem in elems]
+        bindings[Symbol('filter')] = lambda func, elems: [elem for elem in elems if self._apply(func, [elem])]
+        self._toplevelframe = Frame(bindings)
 
-    if value[0] == Symbol('progn'):
-        result = []
-        for element in value[1:]:
-            result = evaluate(element, frame)
+        if mappings:
+            self._toplevelframe = Frame({Symbol(k): v for k, v in mappings.items()},
+                                        self._toplevelframe)
+
+        self._max_depth = DEFAULT_MAX_DEPTH
+        self._timeout = None
+        self._last_evaluation_time = 0
+
+    def last_evaluation_time(self):
+        """Returns the duration of the last evaluation in seconds."""
+        return self._last_evaluation_time
+    
+    def evaluate(self, string, *, max_depth=DEFAULT_MAX_DEPTH, max_time=DEFAULT_MAX_TIME):
+        """Evaluate the given string in this context."""
+
+        start_time = time.time()
+        self._max_depth = max_depth
+        self._timeout = (start_time + max_time) if max_time else None
+        
+        value = parse(string)
+        result = self._evaluate(value, self._toplevelframe)
+        
+        self._last_evaluation_time = time.time() - start_time
+        
+        return result
+    
+    def _evaluate(self, value, frame):
+        if self._max_depth is not None:
+            if self._max_depth < 0:
+                raise SchemeError("Too complex")
+            self._max_depth -= 1
+
+        result = self._evaluate1(value, frame)
+
+        if self._max_depth is not None:
+            self._max_depth += 1
+
+        if self._timeout is not None:
+            if self._timeout < time.time():
+                raise SchemeError("Timeout.")
+            
         return result
 
-    if value[0] == Symbol('if'):
-        test = evaluate(value[1], frame)
-        if test:
-            return evaluate(value[2], frame)
+    def _evaluate1(self, value, frame):
+        # pylint: disable=too-many-branches, too-many-return-statements
+        if isinstance(value, Symbol):
+            bound = frame.lookup(value)
+            if bound is None:
+                raise SchemeError("Unbound:" + str(value))
 
-        return evaluate(value[3], frame)
+            return bound
 
-    if value[0] == Symbol('cond'):
-        for branch in value[1:]:
-            test = evaluate(branch[0], frame)
+        if value == [] or not isinstance(value, list):
+            return value
+
+        if value[0] == Symbol('quote'):
+            return value[1]
+
+        if value[0] == Symbol('progn'):
+            result = []
+            for element in value[1:]:
+                result = self._evaluate(element, frame)
+            return result
+
+        if value[0] == Symbol('if'):
+            test = self._evaluate(value[1], frame)
             if test:
-                return evaluate(branch[1], frame)
-        return []
+                return self._evaluate(value[2], frame)
 
-    if value[0] == Symbol('set'):
-        evaluated = evaluate(value[2], frame)
-        frame.bind(value[1], evaluated)
-        return []
+            return self._evaluate(value[3], frame)
 
-    if value[0] == Symbol('define'):
-        signature = value[1]
-        closure = Closure(value[2:], signature[1:], frame)
-        frame.bind(signature[0], closure)
-        return []
+        if value[0] == Symbol('cond'):
+            for branch in value[1:]:
+                test = self._evaluate(branch[0], frame)
+                if test:
+                    return self._evaluate(branch[1], frame)
+            return []
 
-    if value[0] == Symbol('lambda'):
-        return Closure(value[2:], value[1], frame)
+        if value[0] == Symbol('set'):
+            evaluated = self._evaluate(value[2], frame)
+            frame.bind(value[1], evaluated)
+            return []
 
-    if value[0] == Symbol('let'):
-        bindings = {p[0]: evaluate(p[1], frame) for p in value[1]}
-        return evaluate(value[2], Frame(bindings, frame))
+        if value[0] == Symbol('define'):
+            signature = value[1]
+            closure = Closure(value[2:], signature[1:], frame)
+            frame.bind(signature[0], closure)
+            return []
 
-    if value[0] == Symbol('and'):
-        for v in value[1:]:
-            if not evaluate(v, frame):
-                return False
-        return True
+        if value[0] == Symbol('lambda'):
+            return Closure(value[2:], value[1], frame)
 
-    if value[0] == Symbol('or'):
-        for v in value[1:]:
-            if evaluate(v, frame):
-                return True
-        return False
+        if value[0] == Symbol('let'):
+            bindings = {p[0]: self._evaluate(p[1], frame) for p in value[1]}
+            return self._evaluate(value[2], Frame(bindings, frame))
 
-    func = evaluate(value[0], frame)
-    evaluated = [evaluate(arg, frame) for arg in value[1:]]
-    return apply(func, evaluated)
+        if value[0] == Symbol('and'):
+            for v in value[1:]:
+                if not self._evaluate(v, frame):
+                    return False
+            return True
 
+        if value[0] == Symbol('or'):
+            for v in value[1:]:
+                if self._evaluate(v, frame):
+                    return True
+            return False
 
-def apply(func, params):
-    """Apply func to params."""
+        func = self._evaluate(value[0], frame)
+        evaluated = [self._evaluate(arg, frame) for arg in value[1:]]
+        return self._apply(func, evaluated)
 
-    if isinstance(func, Closure):
-        bindings = {p[0]: p[1] for p in zip(func.get_params(), params)}
-        frame = Frame(bindings, func.get_frame())
-        result = []
-        for form in func.get_forms():
-            result = evaluate(form, frame)
-        return result
+    def _apply(self, func, params):
+        """Apply func to params."""
 
-    if hasattr(func, '__call__'):
-        return func(*params)
+        if isinstance(func, Closure):
+            bindings = {p[0]: p[1] for p in zip(func.get_params(), params)}
+            frame = Frame(bindings, func.get_frame())
+            result = []
+            for form in func.get_forms():
+                result = self._evaluate(form, frame)
+            return result
 
-    raise SchemeError(func)
+        if hasattr(func, '__call__'):
+            return func(*params)
+
+        raise SchemeError(func)
 
 
 TOKEN_SPECS = [
@@ -290,40 +366,12 @@ def _parse(tokens):
     raise SchemeError(head)
 
 
-BUILTIN_FUNCTIONS_BY_NAME = {
-    '+': lambda x, y: x + y,
-    '-': lambda x, y: x - y,
-    '*': lambda x, y: x * y,
-    'mod': lambda x, y: x % y,
-    '/': lambda x, y: x / y,
-    '>': lambda x, y: x > y,
-    '>=': lambda x, y: x >= y,
-    '<': lambda x, y: x <= y,
-    '<=': lambda x, y: x <= y,
-    '=': lambda x, y: x == y,
-    'eq?': lambda x, y: type(x) is type(y) and x == y,
-    'null?': lambda x: x == [],
-    'car': lambda x: x[0],
-    'cdr': lambda x: x[1:],
-    'cons': lambda x, y: [x] + y,
-    'not': lambda x: not bool(x),
-    'length': len,
-    'map': lambda func, elems: list(map(func, elems)),
-    'filter': lambda func, elems: list(filter(func, elems)),
-    'apply': apply,
-}
+if __name__ == '__main__':
+    import sys
 
-
-class SchemeContext:  # pylint: disable=too-few-public-methods
-    """A Scheme evaluation context."""
-
-    def __init__(self):
-        bindings = {Symbol(k): v for k, v in BUILTIN_FUNCTIONS_BY_NAME.items()}
-        self._frame = Frame(bindings)
-        bindings[Symbol('eval')] = lambda x: evaluate(x, self._frame)
-
-    def evaluate(self, string):
-        """Evaluate the given string in this context."""
-
-        value = parse(string)
-        return evaluate(value, self._frame)
+    scheme = Scheme()
+    for arg in sys.argv[1:]:
+        with open(arg, encoding='utf_8') as f:
+            print(';', arg)
+            result = scheme.evaluate(f.read(-1))
+            print(result)
