@@ -126,14 +126,14 @@ DEFAULT_MAX_TIME = 0.1
 class Scheme:
     """A Scheme evaluation context."""
 
-    def __init__(self, mappings={}):
+    def __init__(self, mappings=None):
         """Initializes a new instance."""
-        
+
         bindings = {Symbol(k): v for k, v in BUILTIN_FUNCTIONS_BY_NAME.items()}
         bindings[Symbol('eval')] = lambda x: self._evaluate(x, self._toplevelframe)
-        bindings[Symbol('apply')] = lambda func, params: self._apply(func, params)
+        bindings[Symbol('apply')] = self._apply
         bindings[Symbol('map')] = lambda func, elems: [self._apply(func, [elem]) for elem in elems]
-        bindings[Symbol('filter')] = lambda func, elems: [elem for elem in elems if self._apply(func, [elem])]
+        bindings[Symbol('filter')] = lambda func, es: [e for e in es if self._apply(func, [e])]
         self._toplevelframe = Frame(bindings)
 
         if mappings:
@@ -147,21 +147,21 @@ class Scheme:
     def last_evaluation_time(self):
         """Returns the duration of the last evaluation in seconds."""
         return self._last_evaluation_time
-    
+
     def evaluate(self, string, *, max_depth=DEFAULT_MAX_DEPTH, max_time=DEFAULT_MAX_TIME):
         """Evaluate the given string in this context."""
 
         start_time = time.time()
         self._max_depth = max_depth
         self._timeout = (start_time + max_time) if max_time else None
-        
+
         value = parse(string)
         result = self._evaluate(value, self._toplevelframe)
-        
+
         self._last_evaluation_time = time.time() - start_time
-        
+
         return result
-    
+
     def _evaluate(self, value, frame):
         if self._max_depth is not None:
             if self._max_depth < 0:
@@ -176,7 +176,7 @@ class Scheme:
         if self._timeout is not None:
             if self._timeout < time.time():
                 raise SchemeError("Timeout.")
-            
+
         return result
 
     def _evaluate1(self, value, frame):
@@ -366,12 +366,15 @@ def _parse(tokens):
     raise SchemeError(head)
 
 
-if __name__ == '__main__':
-    import sys
-
+def _main(fs):
     scheme = Scheme()
-    for arg in sys.argv[1:]:
+    for arg in fs:
         with open(arg, encoding='utf_8') as f:
             print(';', arg)
             result = scheme.evaluate(f.read(-1))
             print(result)
+
+
+if __name__ == '__main__':
+    import sys
+    _main(sys.argv[1:])
